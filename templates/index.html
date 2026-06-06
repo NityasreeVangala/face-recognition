@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Face Recognition App</title>
+</head>
+<body>
+  <h1>Upload an Image</h1>
+  <form method="POST" enctype="multipart/form-data">
+    <input type="file" name="image" accept="image/*" required>
+    <button type="submit">Submit</button>
+  </form>
+
+  {% if image %}
+    <h2>Result:</h2>
+    <img src="{{ url_for('static', filename='uploads/' + image) }}" width="600"><br><br>
+    {% for face in predictions %}
+      <p>✅ {{ face.name }} - Confidence: {{ face.confidence }}</p>
+    {% endfor %}
+  {% endif %}
+</body>
+</html>
+

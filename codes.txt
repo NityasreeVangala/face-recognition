@@ -1,0 +1,262 @@
+These are the codes:
+#pdf_reader
+import fitz  # PyMuPDF
+
+def extract_full_text_from_pdf(pdf_path):
+    """
+    Extracts all text from a PDF file.
+    """
+    try:
+        doc = fitz.open(pdf_path)
+        full_text = ""
+        for page in doc:
+            full_text += page.get_text()
+        return full_text
+    except Exception as e:
+        return f"❌ Error reading PDF: {str(e)}"
+
+if __name__ == "__main__":
+    pdf_path = "sample_profiles/dummy_profile.pdf"  # replace with your file path
+    text = extract_full_text_from_pdf(pdf_path)
+    print("📄 Extracted Text:\n")
+    print(text[:3000])  # Preview first part
+#parser.py
+import re
+
+def extract_section(text, start_keywords, end_keywords):
+    start_match = re.search(start_keywords, text, re.IGNORECASE)
+    end_match = re.search(end_keywords, text[start_match.end():], re.IGNORECASE) if start_match else None
+    if start_match and end_match:
+        return text[start_match.end():start_match.end() + end_match.start()]
+    elif start_match:
+        return text[start_match.end():]
+    return ""
+
+def clean_section(section, title=""):
+    if not section:
+        return "Not available"
+
+    section = section.strip()
+    if section.lower().startswith("et:"):
+        section = section[3:].strip()
+
+    if title:
+        section = re.sub(r'^[\s•\-]*' + re.escape(title) + r'[:\-–]*\s*', '', section, flags=re.IGNORECASE)
+
+    section = section.replace("•", "\n• ").replace("*", "\n• ").replace("-", "\n• ")
+    lines = [line.strip("• ").strip() for line in section.splitlines() if line.strip()]
+
+    return "\n".join(lines) if lines else "Not available"
+
+def parse_profile(text):
+    print("🔍 DEBUG - Start of extracted text:\n", text[:500])
+
+    name_match = re.search(r'\n([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)\n(Chief|Professor|Director|Scientist|Engineer|Advisor|Developer|Researcher)', text)
+    if not name_match:
+        name_match = re.search(r'(?:Hi, I am|My name is|This is)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)+)', text, re.IGNORECASE)
+
+    email_match = re.search(r'([\w\.-]+)@[\w\.-]+', text)
+    if not name_match and email_match:
+        guessed_name = email_match.group(1).replace('.', ' ').replace('_', ' ').title()
+        name_match = re.match(r'(.*)', guessed_name)
+
+    location_match = re.search(
+        r'(Palo Alto(?:,?\s*CA)?(?:,?\s*USA)?|Los Angeles|San Francisco|Austin|Hyderabad|Bangalore|New York|Cambridge|Oxford|London|[A-Za-z ]+,\s*(USA|India|UK|United States|United Kingdom|Canada))',
+        text
+    )
+
+    text_lower = text.lower()
+
+    def smart_extract(start_kwds, end_kwds):
+        for sk in start_kwds:
+            for ek in end_kwds:
+                s = re.search(sk, text_lower)
+                e = re.search(ek, text_lower)
+                if s and e and s.start() < e.start():
+                    return text[s.end():e.start()]
+        return ""
+
+    return {
+        'name': name_match.group(1).title() if name_match else "Not available",
+        'email': email_match.group(0) if email_match else "Not available",
+        'location': location_match.group(0) if location_match else "Not available",
+
+        'skills': clean_section(smart_extract(
+            ["skills", "domain specialization", "technical skillset", "technical capabilities", "interdisciplinary expertise"],
+            ["education", "experience", "certifications", "projects", "awards"]
+        ), "Skills"),
+
+        'experience': clean_section(smart_extract(
+            ["experience", "work experience", "roles", "affiliations", "professional positions"],
+            ["education", "certifications", "projects"]
+        ), "Experience"),
+
+        'education': clean_section(smart_extract(
+            ["education", "academic background", "education history"],
+            ["certifications", "projects", "skills"]
+        ), "Education"),
+
+        'projects': clean_section(smart_extract(
+            ["projects", "innovation", "research projects"],
+            ["certifications", "interests", "awards"]
+        ), "Projects"),
+
+        'certifications': clean_section(smart_extract(
+            ["certifications", "training", "certified"],
+            ["awards", "publications", "skills"]
+        ), "Certifications"),
+
+        'interests': clean_section(smart_extract(
+            ["interests", "hobbies", "personal interests"],
+            ["$", "awards"]
+        ), "Interests"),
+
+        'awards': clean_section(smart_extract(
+            ["awards", "recognitions", "honors"],
+            ["publications", "roles", "projects"]
+        ), "Awards"),
+
+        'publications': clean_section(smart_extract(
+            ["publications", "papers", "research contributions"],
+            ["awards", "roles", "projects"]
+        ), "Publications"),
+
+        'roles': clean_section(smart_extract(
+            ["roles", "advisory", "consultant", "committees", "professional affiliations"],
+            ["teaching", "interests", "projects"]
+        ), "Roles"),
+    }
+#test_parser
+from pdf_reader import extract_full_text_from_pdf
+from parser import parse_profile
+
+pdf_path = "sample_profiles/dummy_profile.pdf"  # your file path here
+raw_text = extract_full_text_from_pdf(pdf_path)
+profile_data = parse_profile(raw_text)
+
+print("\n🔍 Extracted Profile Data:\n")
+for key, value in profile_data.items():
+    print(f"{key.upper()}:\n{value}\n{'-'*40}")
+from pdf_reader import extract_full_text_from_pdf
+from parser import parse_profile
+from sentence_transformers import SentenceTransformer, util
+
+# Load sentence embedding model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def answer_question(profile_data, question):
+    if not profile_data:
+        return "❌ No profile data loaded."
+
+    question_lower = question.lower()
+
+    # 🎯 Fast keyword-based fallback for precision
+    if any(word in question_lower for word in ["name", "who"]):
+        return f"NAME:\n{profile_data.get('name', 'Not available')}"
+    elif "email" in question_lower:
+        return f"EMAIL:\n{profile_data.get('email', 'Not available')}"
+    elif any(word in question_lower for word in ["location", "where is", "live", "based"]):
+        return f"LOCATION:\n{profile_data.get('location', 'Not available')}"
+    elif any(word in question_lower for word in ["education", "study", "studied", "college", "university", "degree"]):
+        return f"EDUCATION:\n{profile_data.get('education', 'Not available')}"
+    elif any(word in question_lower for word in ["skills", "technologies", "tools", "programming", "languages"]):
+        return f"SKILLS:\n{profile_data.get('skills', 'Not available')}"
+    elif any(word in question_lower for word in ["experience", "career", "position", "employment", "work"]):
+        return f"EXPERIENCE:\n{profile_data.get('experience', 'Not available')}"
+    elif any(word in question_lower for word in ["project", "innovation", "tech"]):
+        return f"PROJECTS:\n{profile_data.get('projects', 'Not available')}"
+    elif any(word in question_lower for word in ["certification", "course", "certified", "training"]):
+        return f"CERTIFICATIONS:\n{profile_data.get('certifications', 'Not available')}"
+    elif any(word in question_lower for word in ["interest", "hobby", "passion"]):
+        return f"INTERESTS:\n{profile_data.get('interests', 'Not available')}"
+    elif any(word in question_lower for word in ["award", "recognition", "honor"]):
+        return f"AWARDS:\n{profile_data.get('awards', 'Not available')}"
+    elif any(word in question_lower for word in ["publication", "paper", "research"]):
+        return f"PUBLICATIONS:\n{profile_data.get('publications', 'Not available')}"
+    elif any(word in question_lower for word in ["role", "advisor", "committee", "affiliation", "position held"]):
+        return f"ROLES:\n{profile_data.get('roles', 'Not available')}"
+
+    # 🧠 Semantic fallback
+    question_embedding = model.encode(question, convert_to_tensor=True)
+
+    best_key = None
+    best_score = -1
+
+    for key, value in profile_data.items():
+        if value == "Not available":
+            continue
+        content_embedding = model.encode(value, convert_to_tensor=True)
+        score = util.pytorch_cos_sim(question_embedding, content_embedding).item()
+        if score > best_score:
+            best_score = score
+            best_key = key
+
+    if best_key:
+        return f"{best_key.upper()}:\n{profile_data[best_key]}"
+    return "❓ Sorry, I couldn’t find a matching section."
+
+
+# --------------------- CLI Test Interface ---------------------
+
+if __name__ == "__main__":
+    pdf_path = "sample_profiles/dummy_profile.pdf"  # Change to your PDF
+    raw_text = extract_full_text_from_pdf(pdf_path)
+    profile_data = parse_profile(raw_text)
+
+    print("\n✅ Ready to answer questions about the profile!")
+    print("Type 'exit' to quit.\n")
+
+    while True:
+        question = input("❓ Ask a question: ")
+        if question.strip().lower() == "exit":
+            print("👋 Exiting. Goodbye!")
+            break
+        response = answer_question(profile_data, question)
+        print(f"💬 Answer: {response}\n")
+
+#app.py
+import os
+from flask import Flask, request, render_template
+from werkzeug.utils import secure_filename
+from pdf_reader import extract_full_text_from_pdf
+from parser import parse_profile
+from qa_engine import answer_question
+
+UPLOAD_FOLDER = 'uploads'
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Store global profile data after upload
+profile_data = {}
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    global profile_data
+
+    if request.method == 'POST':
+        file = request.files['pdf']
+        if file and file.filename.endswith('.pdf'):
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+
+            # Extract and parse
+            text = extract_full_text_from_pdf(file_path)
+            profile_data = parse_profile(text)
+
+            return render_template('index.html', profile=profile_data, uploaded=True)
+    
+    return render_template('index.html', profile=None, uploaded=False)
+
+@app.route('/ask', methods=['POST'])
+def ask():
+    global profile_data
+    question = request.form['question']
+    answer = answer_question(profile_data, question)
+    return {'answer': answer}
+
+if __name__ == '__main__':
+    os.makedirs('uploads', exist_ok=True)
+    app.run(debug=True)
+
